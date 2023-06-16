@@ -12,5 +12,4 @@ repository = "https://github.com/kilerd/gust"
 
 [dependencies]
 nom = "7.1.3"
-nom-recursive = "0.5.0"
 nom_locate = "4.1.0"

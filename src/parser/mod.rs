@@ -11,16 +11,15 @@ use nom::character::complete::{
 };
 use nom::character::{is_newline, is_space};
 use nom::combinator::{cond, map, map_res, opt, recognize, value};
-use nom::multi::{many0, many1, separated_list0};
+use nom::multi::{fold_many1, many0, many1, separated_list0, separated_list1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{IResult, InputTakeAtPosition};
 use std::collections::HashMap;
 use std::process::id;
 
 use nom_locate::LocatedSpan;
-use nom_recursive::{recursive_parser, RecursiveInfo};
 
-pub type Span<'a> = LocatedSpan<&'a str, RecursiveInfo>;
+pub type Span<'a> = LocatedSpan<&'a str>;
 
 mod helpers;
 //
@@ -136,33 +135,43 @@ pub fn parse_function_parameters(input: Span) -> IResult<Span, Vec<(&str, Type)>
 }
 
 pub fn parse_statement(input: Span) -> IResult<Span, Statement> {
-    map(terminated(parse_expression, tag(";")), |expr| {
+    map(terminated(parse_single_expression, tag(";")), |expr| {
         Statement::Expr(expr)
     })(input)
 }
 
-pub fn parse_expression(input: Span) -> IResult<Span, Expression> {
+pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
     alt((
         map(parse_block, |block| Expression::Block(Box::new(block))),
         map(parse_identifier, |ident| {
             Expression::Identifier(ident.fragment())
         }),
-        // map(parse_field_access, |(lhs, rhs)| {
-        //     Expression::FieldAccess(Box::new(lhs), Box::new(rhs))
-        // }),
     ))(input)
 }
 
-pub fn parse_field_access(input: Span) -> IResult<Span, (Expression, Expression)> {
-    let (r, (lhs, _, rhs)) = tuple((parse_expression, tag("."), parse_expression))(input)?;
-    Ok((r, (lhs, rhs)))
+pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
+    let (r, mut exprs) = separated_list1(tag("."), parse_single_expression)(s)?;
+    let expr = match exprs.len() {
+        1 => exprs.pop().unwrap(),
+        _ => {
+            let option = exprs.into_iter().fold(None, |acc, item| {
+                if let Some(prev) = acc {
+                    Some(Expression::FieldAccess(Box::new(prev), Box::new(item)))
+                } else {
+                    Some(item)
+                }
+            });
+            option.unwrap()
+        }
+    };
+    Ok((r, expr))
 }
 
 pub fn parse_block(input: Span) -> IResult<Span, Block> {
     let (r, (_, statements, expr, _)) = tuple((
         tailing_space_0(tag("{")),
         many0(parse_statement),
-        opt(parse_expression),
+        opt(parse_single_expression),
         tailing_space_0(tag("}")),
     ))(input)?;
 
@@ -187,19 +196,18 @@ mod test {
 
     macro_rules! assert_parse {
         ($expected: expr, $parser_name:ident,  $parse_content:expr) => {
-            let (res, output) = $parser_name(crate::parser::Span::new_extra($parse_content, nom_recursive::RecursiveInfo::new())).unwrap();
-            assert_eq!(&"", res.fragment());
+            let (res, output) = $parser_name(crate::parser::Span::new($parse_content)).unwrap();
+            assert_eq!(&"", res.fragment(), "content leave should be empty");
             assert_eq!($expected, output);
         };
     }
     macro_rules! assert_parse_fragment {
         ($expected: expr, $parser_name:ident,  $parse_content:expr) => {
-            let (res, output) = $parser_name(crate::parser::Span::new_extra($parse_content, nom_recursive::RecursiveInfo::new())).unwrap();
-            assert_eq!(&"", res.fragment());
+            let (res, output) = $parser_name(crate::parser::Span::new($parse_content)).unwrap();
+            assert_eq!(&"", res.fragment(), "content leave should be empty");
             assert_eq!(&$expected, output.fragment());
         };
     }
-
 
     mod r#type {
         use crate::ast::{PlainType, Type};
@@ -224,7 +232,6 @@ mod test {
         }
     }
     mod identifier {
-        use nom_recursive::RecursiveInfo;
         use crate::parser::{parse_identifier, Span};
 
         #[test]
@@ -239,7 +246,7 @@ mod test {
         }
         #[test]
         fn should_not_parse() {
-            assert!(dbg!(parse_identifier(Span::new_extra("", RecursiveInfo::new()))).is_err());
+            assert!(dbg!(parse_identifier(Span::new(""))).is_err());
         }
     }
     mod function {
@@ -297,7 +304,7 @@ mod test {
     }
     mod expression {
         use crate::ast::{Block, Expression};
-        use crate::parser::{parse_expression, parse_field_access};
+        use crate::parser::{parse_expression, parse_single_expression};
 
         #[test]
         fn should_parse_block() {
@@ -310,8 +317,8 @@ mod test {
         }
         #[test]
         fn should_parse_field_access() {
-            assert_parse! {(Expression::Identifier("my_struct"), Expression::Identifier("a")), parse_field_access,"my_struct.a"}
             assert_parse! {Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a"))), parse_expression,"my_struct.a" }
+            assert_parse! {Expression::FieldAccess(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))), Box::new(Expression::Identifier("b"))), parse_expression,"my_struct.a.b" }
         }
     }
 }
