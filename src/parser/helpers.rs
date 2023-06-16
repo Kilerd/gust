@@ -5,6 +5,7 @@ use nom::error::ParseError;
 use nom::multi::{separated_list0, separated_list1};
 use nom::sequence::{preceded, terminated};
 use nom::{IResult, InputLength, InputTakeAtPosition, Parser};
+use crate::parser::Span;
 
 pub fn tailing_space_1<I, O1, E: nom::error::ParseError<I>, F>(
     mut f: F,
@@ -53,20 +54,20 @@ where
 pub fn tailing_separator_list_0< 'a, O, E, F, >(
     sep: &'a str,
     mut f: F,
-) -> impl FnMut(&'a str) -> IResult<&'a str, Vec<O>, E>
+) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<O>, E>
 where
-    F: Parser<&'a str, O, E>,
-    E: ParseError<&'a str>,
+    F: Parser<Span<'a>, O, E>,
+    E: ParseError<Span<'a>>,
 {
     map(opt(tailing_separator_list_1(sep, f)), |o|o.unwrap_or_default())
 }
 pub fn tailing_separator_list_1< 'a, O, E, F, >(
     sep: &'a str,
     mut f: F,
-) -> impl FnMut(&'a str) -> IResult<&'a str, Vec<O>, E>
+) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Vec<O>, E>
     where
-        F: Parser<&'a str, O, E>,
-        E: ParseError<&'a str>,
+        F: Parser<Span<'a>, O, E>,
+        E: ParseError<Span<'a>>,
 {
     terminated(
         separated_list1(leading_space_0(tailing_space_0(tag(sep.clone()))), f),
