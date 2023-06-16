@@ -67,7 +67,7 @@ pub enum Expression<'a> {
         then_body: Box<Expression<'a>>,
         else_body: Box<Expression<'a>>,
     },
-    Call(Box<Expression<'a>>, Vec<Box<Expression<'a>>>),
+    FunctionCall(Box<Expression<'a>>, Vec<Box<Expression<'a>>>),
     Group(Box<Expression<'a>>),
     Negative(Box<i32>),
 }

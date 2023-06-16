@@ -146,7 +146,17 @@ pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
         map(parse_identifier, |ident| {
             Expression::Identifier(ident.fragment())
         }),
+        parse_group_expression,
     ))(input)
+}
+pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
+    let (r, (_, expr, _)) = tuple((
+        leading_space_0(tailing_space_0(tag("("))),
+        parse_expression,
+        leading_space_0(tailing_space_0(tag(")"))),
+    ))(input)?;
+    let expr = Expression::Group(Box::new(expr));
+    Ok((r, expr))
 }
 
 pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
@@ -319,6 +329,11 @@ mod test {
         fn should_parse_field_access() {
             assert_parse! {Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a"))), parse_expression,"my_struct.a" }
             assert_parse! {Expression::FieldAccess(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))), Box::new(Expression::Identifier("b"))), parse_expression,"my_struct.a.b" }
+        }
+        #[test]
+        fn should_arse_group_expression() {
+            assert_parse! {Expression::Group(Box::new(Expression::Identifier("my_struct"))), parse_expression,"(my_struct)"}
+            assert_parse! {Expression::FieldAccess(Box::new(Expression::Group(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))))), Box::new(Expression::Identifier("b"))), parse_expression,"(my_struct.a).b" }
         }
     }
 }
