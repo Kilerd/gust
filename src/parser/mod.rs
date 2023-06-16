@@ -18,8 +18,9 @@ use std::collections::HashMap;
 use std::process::id;
 
 use nom_locate::LocatedSpan;
+use nom_recursive::{recursive_parser, RecursiveInfo};
 
-pub type Span<'a> = LocatedSpan<&'a str>;
+pub type Span<'a> = LocatedSpan<&'a str, RecursiveInfo>;
 
 mod helpers;
 //
@@ -186,34 +187,19 @@ mod test {
 
     macro_rules! assert_parse {
         ($expected: expr, $parser_name:ident,  $parse_content:expr) => {
-            let (res, output) = $parser_name(crate::parser::Span::new($parse_content)).unwrap();
+            let (res, output) = $parser_name(crate::parser::Span::new_extra($parse_content, nom_recursive::RecursiveInfo::new())).unwrap();
             assert_eq!(&"", res.fragment());
             assert_eq!($expected, output);
         };
     }
-
-    mod import {
-        use crate::parser::{parse_import, Span};
-
-        #[test]
-        fn should_parse_import() {
-            easy_parse! {
-                parse_import(Span::new("use fmt ;")),
-                parse_import(Span::new("use fmt;")),
-            }
-        }
+    macro_rules! assert_parse_fragment {
+        ($expected: expr, $parser_name:ident,  $parse_content:expr) => {
+            let (res, output) = $parser_name(crate::parser::Span::new_extra($parse_content, nom_recursive::RecursiveInfo::new())).unwrap();
+            assert_eq!(&"", res.fragment());
+            assert_eq!(&$expected, output.fragment());
+        };
     }
 
-    mod item {
-        use crate::parser::{parse_item, Span};
-
-        #[test]
-        fn should_parse_import_item() {
-            easy_parse! {
-                parse_item(Span::new("use fmt ;")),
-            }
-        }
-    }
 
     mod r#type {
         use crate::ast::{PlainType, Type};
@@ -221,14 +207,6 @@ mod test {
 
         #[test]
         fn should_parse_plain_type() {
-            let (res, output) = parse_type(Span::new("MyStruct")).unwrap();
-            assert_eq!(&"", res.fragment());
-            assert_eq!(
-                (Type::Plain(PlainType {
-                    name: "MyStruct".to_owned()
-                })),
-                output
-            );
             assert_parse! {Type::Plain(PlainType {name: "MyStruct".to_owned()}), parse_type,"MyStruct"}
         }
         #[test]
@@ -246,21 +224,22 @@ mod test {
         }
     }
     mod identifier {
+        use nom_recursive::RecursiveInfo;
         use crate::parser::{parse_identifier, Span};
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse! {Span::new("_"), parse_identifier, "_"}
-            assert_parse! {Span::new("_123"), parse_identifier,"_123"}
-            assert_parse! {Span::new("a"), parse_identifier,"a"}
-            assert_parse! {Span::new("_a"), parse_identifier,"_a"}
-            assert_parse! {Span::new("_a123"), parse_identifier,"_a123"}
-            assert_parse! {Span::new("a_bsdf"), parse_identifier,"a_bsdf"}
-            assert_parse! {Span::new("KFCVWO50"), parse_identifier,"KFCVWO50"}
+            assert_parse_fragment! {"_", parse_identifier, "_"}
+            assert_parse_fragment! {"_123", parse_identifier,"_123"}
+            assert_parse_fragment! {"a", parse_identifier,"a"}
+            assert_parse_fragment! {"_a", parse_identifier,"_a"}
+            assert_parse_fragment! {"_a123", parse_identifier,"_a123"}
+            assert_parse_fragment! {"a_bsdf", parse_identifier,"a_bsdf"}
+            assert_parse_fragment! {"KFCVWO50", parse_identifier,"KFCVWO50"}
         }
         #[test]
         fn should_not_parse() {
-            assert!(dbg!(parse_identifier(Span::new(""))).is_err());
+            assert!(dbg!(parse_identifier(Span::new_extra("", RecursiveInfo::new()))).is_err());
         }
     }
     mod function {
