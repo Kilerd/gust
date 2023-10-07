@@ -140,12 +140,27 @@ pub fn parse_statement(input: Span) -> IResult<Span, Statement> {
     })(input)
 }
 
+pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expression> {
+    let (r, (ident, params)) = tuple((
+        parse_identifier,
+        opt(tuple((
+            leading_space_0(tailing_space_0(tag("("))),
+            leading_space_0(tailing_space_0(tag(")"))),
+        ))),
+    ))(input)?;
+    if let Some(params) = params {
+        Ok((
+            r,
+            Expression::FunctionCall(Box::new(Expression::Identifier(ident.fragment())), vec![]),
+        ))
+    } else {
+        Ok((r, Expression::Identifier(ident.fragment())))
+    }
+}
 pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
     alt((
         map(parse_block, |block| Expression::Block(Box::new(block))),
-        map(parse_identifier, |ident| {
-            Expression::Identifier(ident.fragment())
-        }),
+        parse_identifier_or_function_call,
         parse_group_expression,
     ))(input)
 }
@@ -159,7 +174,7 @@ pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     Ok((r, expr))
 }
 
-pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
+pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
     let (r, mut exprs) = separated_list1(tag("."), parse_single_expression)(s)?;
     let expr = match exprs.len() {
         1 => exprs.pop().unwrap(),
@@ -175,6 +190,10 @@ pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
         }
     };
     Ok((r, expr))
+}
+
+pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
+    parse_field_access(s)
 }
 
 pub fn parse_block(input: Span) -> IResult<Span, Block> {
@@ -334,6 +353,12 @@ mod test {
         fn should_arse_group_expression() {
             assert_parse! {Expression::Group(Box::new(Expression::Identifier("my_struct"))), parse_expression,"(my_struct)"}
             assert_parse! {Expression::FieldAccess(Box::new(Expression::Group(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))))), Box::new(Expression::Identifier("b"))), parse_expression,"(my_struct.a).b" }
+        }
+        #[test]
+        fn should_parse_function_call() {
+            assert_parse! { Expression::FieldAccess(Box::new(Expression::FunctionCall(Box::new(Expression::Identifier("a")), vec![])), Box::new(Expression::Identifier("b"))), parse_expression, "a().b"}
+            assert_parse! { Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![]), parse_expression, "func()"}
+            assert_parse! { Expression::FunctionCall(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("printLn")))), vec![]), parse_expression, "fmt.printLn()"}
         }
     }
 }
