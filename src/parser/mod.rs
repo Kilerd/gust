@@ -8,9 +8,10 @@ use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
 
-use crate::ast::{Block, Expression, FunctionDeclare, Import, Item, PlainType, Statement, Type};
+use crate::ast::{Block, Expression, FunctionDeclare, Import, Item, LetStatement, PlainType, Statement, Type};
 use crate::parser::helpers::{
-    leading_space_0, tailing_separator_list_0, tailing_space_0, tailing_space_1,
+    leading_space_0, surrounding_space_0, surrounding_space_1, tailing_separator_list_0,
+    tailing_space_0, tailing_space_1,
 };
 
 pub type Span<'a> = LocatedSpan<&'a str>;
@@ -156,11 +157,13 @@ pub fn parse_type_identifier(input: Span) -> IResult<Span, Span> {
 /// ATOM = IDENTIFIER | BOOL
 pub fn parse_atom(input: Span) -> IResult<Span, Expression> {
     alt((
+        parse_bool,
+        parse_number,
+
         map(parse_identifier, |it| {
             Expression::Identifier(it.fragment().to_string())
         }),
-        parse_bool,
-        parse_number,
+        parse_group_expression
     ))(input)
 }
 
@@ -200,6 +203,40 @@ pub fn parse_function_parameters(input: Span) -> IResult<Span, Vec<(&str, Type)>
 }
 
 pub fn parse_statement(input: Span) -> IResult<Span, Statement> {
+    alt((parse_statement_let, parse_statement_expr))(input)
+}
+
+
+/// LET_STATEMENT = let ~ mut? ~ identifier ~ ": ttype"? ~ (= value)? ~ ;
+pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
+    let (res, (mutable, ident, ident_type, value)) = delimited(
+        leading_space_0(tailing_space_1(tag("let"))),
+        tuple((
+            opt(surrounding_space_1(tag("mut"))),
+            parse_identifier,
+            opt(preceded(
+                surrounding_space_0(tag(":")),
+                parse_type,
+            )),
+            opt(preceded(
+                surrounding_space_0(tag("=")),
+                parse_single_expression
+            ))
+        )),
+        surrounding_space_0(tag(";"))
+    )(input)?;
+
+    let let_stats = Statement::LetStatement(LetStatement {
+        mutable: mutable.is_some(),
+        identifier: ident.fragment().to_string(),
+        ttype: ident_type,
+        value,
+    });
+
+    Ok((res, let_stats))
+}
+
+pub fn parse_statement_expr(input: Span) -> IResult<Span, Statement> {
     map(terminated(parse_single_expression, tag(";")), |expr| {
         Statement::Expr(expr)
     })(input)
@@ -207,7 +244,7 @@ pub fn parse_statement(input: Span) -> IResult<Span, Statement> {
 
 pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expression> {
     let (r, (ident, params)) = tuple((
-        parse_identifier,
+        parse_atom,
         opt(tuple((
             leading_space_0(tailing_space_0(tag("("))),
             tailing_space_0(parse_function_call_parameters),
@@ -219,31 +256,30 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
         Ok((
             r,
             Expression::FunctionCall(
-                Box::new(Expression::Identifier(ident.fragment().to_string())),
+                Box::new(ident),
                 params,
             ),
         ))
     } else {
-        Ok((r, Expression::Identifier(ident.fragment().to_string())))
+        Ok((r, ident))
     }
 }
 
 pub fn parse_function_call_parameters(input: Span) -> IResult<Span, Vec<Expression>> {
-    tailing_separator_list_0(",", parse_expression)(input)
+    tailing_separator_list_0(",", parse_single_expression)(input)
 }
 
 pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
     alt((
         map(parse_block, |block| Expression::Block(Box::new(block))),
-        parse_identifier_or_function_call,
-        parse_group_expression,
+        parse_field_access,
     ))(input)
 }
 
 pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     let (r, (_, expr, _)) = tuple((
         leading_space_0(tailing_space_0(tag("("))),
-        parse_expression,
+        parse_single_expression,
         leading_space_0(tailing_space_0(tag(")"))),
     ))(input)?;
     let expr = Expression::Group(Box::new(expr));
@@ -251,7 +287,7 @@ pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
 }
 
 pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
-    let (r, mut exprs) = separated_list1(tag("."), parse_single_expression)(s)?;
+    let (r, mut exprs) = separated_list1(tag("."), parse_identifier_or_function_call)(s)?;
     let expr = match exprs.len() {
         1 => exprs.pop().unwrap(),
         _ => {
@@ -274,9 +310,6 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
     Ok((r, expr))
 }
 
-pub fn parse_expression(s: Span) -> IResult<Span, Expression> {
-    parse_field_access(s)
-}
 
 pub fn parse_block(input: Span) -> IResult<Span, Block> {
     let (r, (_, statements, expr, _)) = tuple((
@@ -351,6 +384,65 @@ mod test {
             };
             assert_parse! { import, parse_import,
                 "use fmt::{println, print};"
+            }
+        }
+    }
+
+    mod statement {
+        mod let_statement {
+            use crate::ast::{Expression, LetStatement, Statement, Type};
+            use crate::parser::parse_statement;
+
+            #[test]
+            fn let_with_value() {
+                let stats = Statement::LetStatement(LetStatement{
+                    mutable: false,
+                    identifier: "a".to_string(),
+                    ttype: None,
+                    value: Some(Expression::Number(1)),
+                });
+                assert_parse!{stats, parse_statement, "let a = 1;"}
+                assert_parse!{stats, parse_statement, "let a=1;"}
+                assert_parse!{stats, parse_statement, "let a= 1;"}
+                assert_parse!{stats, parse_statement, "let a =1;"}
+            }
+
+            #[test]
+            fn let_without_value() {
+                let stats = Statement::LetStatement(LetStatement{
+                    mutable: false,
+                    identifier: "a".to_string(),
+                    ttype: None,
+                    value: None,
+                });
+                assert_parse!{stats, parse_statement, "let a;"}
+                assert_parse!{stats, parse_statement, "let a ;"}
+            }
+
+            #[test]
+            fn let_with_ttype() {
+                let stats = Statement::LetStatement(LetStatement{
+                    mutable: false,
+                    identifier: "a".to_string(),
+                    ttype: Some(Type::Int32),
+                    value: None,
+                });
+                assert_parse!{stats, parse_statement, "let a: i32;"}
+                assert_parse!{stats, parse_statement, "let a : i32 ;"}
+                assert_parse!{stats, parse_statement, "let a :i32 ;"}
+            }
+            #[test]
+            fn let_with_ttype_and_value() {
+                let stats = Statement::LetStatement(LetStatement{
+                    mutable: false,
+                    identifier: "a".to_string(),
+                    ttype: Some(Type::Int32),
+                    value: Some(Expression::Number(1)),
+                });
+                assert_parse!{stats, parse_statement, "let a:i32 = 1;"}
+                assert_parse!{stats, parse_statement, "let a : i32=1;"}
+                assert_parse!{stats, parse_statement, "let a: i32 = 1;"}
+                assert_parse!{stats, parse_statement, "let a :i32 =1;"}
             }
         }
     }
@@ -573,18 +665,18 @@ mod test {
 
     mod expression {
         use crate::ast::{Block, Expression};
-        use crate::parser::parse_expression;
+        use crate::parser::parse_single_expression;
 
         #[test]
         fn should_parse_block() {
-            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_expression,
+            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_single_expression,
                 "{}"
             }
         }
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse! {Expression::Identifier("my_struct".to_string()), parse_expression,
+            assert_parse! {Expression::Identifier("my_struct".to_string()), parse_single_expression,
                 "my_struct"
             }
         }
@@ -595,7 +687,7 @@ mod test {
                 Box::new(Expression::Identifier("my_struct".to_string())),
                 Box::new(Expression::Identifier("a".to_string())),
             );
-            assert_parse! {expr, parse_expression,
+            assert_parse! {expr, parse_single_expression,
                 "my_struct.a"
             }
             let expr = Expression::FieldAccess(
@@ -605,7 +697,7 @@ mod test {
                 )),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! {expr, parse_expression,
+            assert_parse! {expr, parse_single_expression,
                 "my_struct.a.b"
             }
         }
@@ -613,7 +705,7 @@ mod test {
         #[test]
         fn should_arse_group_expression() {
             let expr = Expression::Group(Box::new(Expression::Identifier("my_struct".to_string())));
-            assert_parse! {expr, parse_expression,
+            assert_parse! {expr, parse_single_expression,
                 "(my_struct)"
             }
             let expr = Expression::FieldAccess(
@@ -623,7 +715,7 @@ mod test {
                 )))),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! {expr, parse_expression,
+            assert_parse! {expr, parse_single_expression,
                 "(my_struct.a).b"
             }
         }
@@ -637,7 +729,7 @@ mod test {
                 )),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "a().b"
             }
 
@@ -645,7 +737,7 @@ mod test {
                 Box::new(Expression::Identifier("func".to_string())),
                 vec![],
             );
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "func()"
             }
 
@@ -656,7 +748,7 @@ mod test {
                 )),
                 vec![],
             );
-            assert_parse! {expr, parse_expression,
+            assert_parse! {expr, parse_single_expression,
                 "fmt.printLn()"
             }
 
@@ -673,7 +765,7 @@ mod test {
                 )),
                 vec![],
             );
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "fmt.a().b()"
             }
         }
@@ -685,7 +777,7 @@ mod test {
                 vec![Box::new(Expression::Identifier("a".to_string()))],
             );
 
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "func(a)"
             }
 
@@ -697,11 +789,11 @@ mod test {
                 ],
             );
 
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "func(a,b)"
             }
 
-            assert_parse! { expr, parse_expression,
+            assert_parse! { expr, parse_single_expression,
                 "func(a,b,)"
             }
         }

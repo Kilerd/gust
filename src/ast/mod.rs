@@ -9,8 +9,27 @@ pub enum Item<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
+    LetStatement(LetStatement),
     Expr(Expression),
 }
+
+
+/// ```gust
+/// let a = 1;
+/// let a;
+/// let a: i32 = 1;
+/// ```
+#[derive(Debug, PartialEq)]
+pub struct LetStatement {
+    pub mutable: bool,
+    pub identifier: String,
+    /// type can be inferred by the value
+    pub ttype: Option<Type>,
+
+    /// value can be initialised later.
+    pub value: Option<Expression>
+}
+
 
 /// ```gust
 /// use fmt;
