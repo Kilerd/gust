@@ -175,6 +175,7 @@ pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     let expr = Expression::Group(Box::new(expr));
     Ok((r, expr))
 }
+
 pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
     let (r, mut exprs) = separated_list1(tag("."), parse_single_expression)(s)?;
     let expr = match exprs.len() {
@@ -182,17 +183,15 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
         _ => {
             let option = exprs.into_iter().fold(None, |acc, item| {
                 if let Some(prev) = acc {
-
                     match item {
                         Expression::FunctionCall(fc, params) => {
                             Some(Expression::FunctionCall(
                                 Box::new(Expression::FieldAccess(Box::new(prev), fc))
-                                ,params
+                                , params,
                             ))
                         }
-                        _ => { Some(Expression::FieldAccess(Box::new(prev), Box::new(item)))}
+                        _ => { Some(Expression::FieldAccess(Box::new(prev), Box::new(item))) }
                     }
-
                 } else {
                     Some(item)
                 }
@@ -379,6 +378,57 @@ mod test {
             };
 
             assert_parse! {declare, parse_function_declare,"fn main() -> i32 {}"}
+        }
+
+        #[test]
+        fn should_parse_function_params() {
+            #[test]
+            fn should_parse_empty_function_with_i32_return_type() {
+                let declare = FunctionDeclare {
+                    ident: "main",
+                    parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
+                    ret_type: Type::Plain(PlainType {
+                        name: "i32".to_owned(),
+                    }),
+                    block: Block {
+                        statements: vec![],
+                        expr: None,
+                    },
+                };
+
+                assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct) -> i32 {}"}
+
+
+                let declare = FunctionDeclare {
+                    ident: "main",
+                    parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() })), ("my2", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
+                    ret_type: Type::Plain(PlainType {
+                        name: "i32".to_owned(),
+                    }),
+                    block: Block {
+                        statements: vec![],
+                        expr: None,
+                    },
+                };
+
+                assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct) -> i32 {}"}
+            }
+        }
+        #[test]
+        fn should_parse_with_trailing_comma() {
+            let declare = FunctionDeclare {
+                ident: "main",
+                parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() })), ("my2", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
+                ret_type: Type::Plain(PlainType {
+                    name: "i32".to_owned(),
+                }),
+                block: Block {
+                    statements: vec![],
+                    expr: None,
+                },
+            };
+
+            assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct,) -> i32 {}"}
         }
     }
 
