@@ -157,6 +157,7 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
         Ok((r, Expression::Identifier(ident.fragment())))
     }
 }
+
 pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
     alt((
         map(parse_block, |block| Expression::Block(Box::new(block))),
@@ -164,6 +165,7 @@ pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
         parse_group_expression,
     ))(input)
 }
+
 pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     let (r, (_, expr, _)) = tuple((
         leading_space_0(tailing_space_0(tag("("))),
@@ -173,7 +175,6 @@ pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     let expr = Expression::Group(Box::new(expr));
     Ok((r, expr))
 }
-
 pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
     let (r, mut exprs) = separated_list1(tag("."), parse_single_expression)(s)?;
     let expr = match exprs.len() {
@@ -181,7 +182,17 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
         _ => {
             let option = exprs.into_iter().fold(None, |acc, item| {
                 if let Some(prev) = acc {
-                    Some(Expression::FieldAccess(Box::new(prev), Box::new(item)))
+
+                    match item {
+                        Expression::FunctionCall(fc, params) => {
+                            Some(Expression::FunctionCall(
+                                Box::new(Expression::FieldAccess(Box::new(prev), fc))
+                                ,params
+                            ))
+                        }
+                        _ => { Some(Expression::FieldAccess(Box::new(prev), Box::new(item)))}
+                    }
+
                 } else {
                     Some(item)
                 }
@@ -244,51 +255,88 @@ mod test {
 
         #[test]
         fn should_parse_plain_type() {
-            assert_parse! {Type::Plain(PlainType {name: "MyStruct".to_owned()}), parse_type,"MyStruct"}
+            assert_parse! {Type::Plain(PlainType {name: "MyStruct".to_owned()}), parse_type,
+                "MyStruct"
+            }
         }
+
         #[test]
         fn should_parse_pointer_type() {
-            assert_parse! {Type::Pointer(Box::new(Type::Plain(PlainType {name: "MyStruct".to_owned()}))), parse_type,"*MyStruct"}
+            assert_parse! {Type::Pointer(Box::new(Type::Plain(PlainType {name: "MyStruct".to_owned()}))), parse_type,
+                "*MyStruct"
+            }
         }
+
         #[test]
         fn should_parse_reference_type() {
-            assert_parse! {Type::Reference(Box::new(Type::Plain(PlainType {name: "MyStruct".to_owned()}))), parse_type,"&MyStruct"}
+            assert_parse! {Type::Reference(Box::new(Type::Plain(PlainType {name: "MyStruct".to_owned()}))), parse_type,
+                "&MyStruct"
+            }
             assert_parse! {Type::Reference(Box::new(Type::Pointer(Box::new(Type::Plain(PlainType {name: "MyStruct".to_owned()}))))), parse_type,"&*MyStruct"}
         }
+
         #[test]
         fn should_parse_unit_type() {
-            assert_parse! {Type::Unit, parse_type,"()"}
+            assert_parse! {Type::Unit, parse_type,
+                "()"
+            }
         }
     }
+
     mod identifier {
         use crate::parser::{parse_identifier, Span};
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse_fragment! {"_", parse_identifier, "_"}
-            assert_parse_fragment! {"_123", parse_identifier,"_123"}
-            assert_parse_fragment! {"a", parse_identifier,"a"}
-            assert_parse_fragment! {"_a", parse_identifier,"_a"}
-            assert_parse_fragment! {"_a123", parse_identifier,"_a123"}
-            assert_parse_fragment! {"a_bsdf", parse_identifier,"a_bsdf"}
-            assert_parse_fragment! {"KFCVWO50", parse_identifier,"KFCVWO50"}
+            assert_parse_fragment! {"_", parse_identifier,
+                "_"
+            }
+            assert_parse_fragment! {"_123", parse_identifier,
+                "_123"
+            }
+            assert_parse_fragment! {"a", parse_identifier,
+                "a"
+            }
+            assert_parse_fragment! {"_a", parse_identifier,
+                "_a"
+            }
+            assert_parse_fragment! {"_a123", parse_identifier,
+                "_a123"
+            }
+            assert_parse_fragment! {"a_bsdf", parse_identifier,
+                "a_bsdf"
+            }
+            assert_parse_fragment! {"KFCVWO50", parse_identifier,
+                "KFCVWO50"
+            }
         }
+
         #[test]
         fn should_not_parse() {
             assert!(dbg!(parse_identifier(Span::new(""))).is_err());
         }
     }
+
     mod function {
         use crate::ast::{PlainType, Type};
         use crate::parser::{parse_function_parameter, parse_function_parameters, Span};
 
         #[test]
         fn should_parse_function_parameter() {
-            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter, "my:MyStruct"}
-            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter, "my :MyStruct"}
-            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter, "my : MyStruct"}
-            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter, "my: MyStruct"}
+            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter,
+                "my:MyStruct"
+            }
+            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter,
+                "my :MyStruct"
+            }
+            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter,
+                "my : MyStruct"
+            }
+            assert_parse! {("my", Type::Plain(PlainType {name: "MyStruct".to_owned()})), parse_function_parameter,
+                "my: MyStruct"
+            }
         }
+
         #[test]
         fn should_parse_function_parameters() {
             assert_parse! {vec![("my", Type::Plain(PlainType {name: "MyStruct".to_owned()}))], parse_function_parameters,"my:MyStruct"}
@@ -300,9 +348,11 @@ mod test {
             assert_parse! {Vec::<(&str, Type)>::new(), parse_function_parameters, ""}
         }
     }
+
     mod block {
         use crate::ast::Block;
         use crate::parser::parse_block;
+
         #[test]
         fn should_parse_block() {
             assert_parse! {Block{statements: vec![], expr:None}, parse_block, "{}"}
@@ -331,34 +381,72 @@ mod test {
             assert_parse! {declare, parse_function_declare,"fn main() -> i32 {}"}
         }
     }
+
     mod expression {
         use crate::ast::{Block, Expression};
         use crate::parser::{parse_expression, parse_single_expression};
 
         #[test]
         fn should_parse_block() {
-            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_expression,"{}"}
+            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_expression,
+                "{}"
+            }
         }
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse! {Expression::Identifier("my_struct"), parse_expression,"my_struct"}
+            assert_parse! {Expression::Identifier("my_struct"), parse_expression,
+                "my_struct"
+            }
         }
+
         #[test]
         fn should_parse_field_access() {
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a"))), parse_expression,"my_struct.a" }
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))), Box::new(Expression::Identifier("b"))), parse_expression,"my_struct.a.b" }
+            assert_parse! {Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a"))), parse_expression,
+                "my_struct.a"
+            }
+            assert_parse! {Expression::FieldAccess(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))), Box::new(Expression::Identifier("b"))), parse_expression,
+                "my_struct.a.b"
+            }
         }
+
         #[test]
         fn should_arse_group_expression() {
-            assert_parse! {Expression::Group(Box::new(Expression::Identifier("my_struct"))), parse_expression,"(my_struct)"}
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::Group(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))))), Box::new(Expression::Identifier("b"))), parse_expression,"(my_struct.a).b" }
+            assert_parse! {Expression::Group(Box::new(Expression::Identifier("my_struct"))), parse_expression,
+                "(my_struct)"
+            }
+            assert_parse! {Expression::FieldAccess(Box::new(Expression::Group(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))))), Box::new(Expression::Identifier("b"))), parse_expression,
+                "(my_struct.a).b"
+            }
         }
+
         #[test]
         fn should_parse_function_call() {
-            assert_parse! { Expression::FieldAccess(Box::new(Expression::FunctionCall(Box::new(Expression::Identifier("a")), vec![])), Box::new(Expression::Identifier("b"))), parse_expression, "a().b"}
-            assert_parse! { Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![]), parse_expression, "func()"}
-            assert_parse! { Expression::FunctionCall(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("printLn")))), vec![]), parse_expression, "fmt.printLn()"}
+            assert_parse! { Expression::FieldAccess(Box::new(Expression::FunctionCall(Box::new(Expression::Identifier("a")), vec![])), Box::new(Expression::Identifier("b"))), parse_expression,
+                "a().b"
+            }
+            assert_parse! { Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![]), parse_expression,
+                "func()"
+            }
+            assert_parse! { Expression::FunctionCall(
+                Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("printLn")))), vec![]
+            ), parse_expression,
+                "fmt.printLn()"
+            }
+
+            assert_parse! {
+                Expression::FunctionCall(
+                    Box::new(Expression::FieldAccess(
+                        Box::new(Expression::FunctionCall(
+                            Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("a")))), vec![]
+                        )),
+                        Box::new(Expression::Identifier("b"))
+                    )),
+                    vec![]
+                )
+                , parse_expression,
+                "fmt.a().b()"
+            }
         }
     }
 }
