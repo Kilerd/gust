@@ -1,23 +1,20 @@
+use nom::{InputTakeAtPosition, IResult, Parser};
+use nom::branch::alt;
+use nom::bytes::complete::tag;
+use nom::character::complete::{
+    alpha1, alphanumeric1, line_ending, space0,
+};
+use nom::combinator::{map, opt, recognize};
+use nom::multi::{many0, many1, separated_list1};
+use nom::sequence::{delimited, preceded, terminated, tuple};
+use nom_locate::LocatedSpan;
+
 use crate::ast::{
-    Block, Expression, FunctionDeclare, GustFile, Import, Item, PlainType, Statement, Type,
+    Block, Expression, FunctionDeclare, Import, Item, PlainType, Statement, Type,
 };
 use crate::parser::helpers::{
     leading_space_0, tailing_separator_list_0, tailing_space_0, tailing_space_1,
 };
-use nom::branch::alt;
-use nom::bytes::complete::tag;
-use nom::character::complete::{
-    alpha0, alpha1, alphanumeric0, alphanumeric1, line_ending, newline, space0, space1,
-};
-use nom::character::{is_newline, is_space};
-use nom::combinator::{cond, map, map_res, opt, recognize, value};
-use nom::multi::{fold_many1, many0, many1, separated_list0, separated_list1};
-use nom::sequence::{delimited, pair, preceded, terminated, tuple};
-use nom::{IResult, InputTakeAtPosition};
-use std::collections::HashMap;
-use std::process::id;
-
-use nom_locate::LocatedSpan;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
@@ -145,17 +142,23 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
         parse_identifier,
         opt(tuple((
             leading_space_0(tailing_space_0(tag("("))),
+            tailing_space_0(parse_function_call_parameters),
             leading_space_0(tailing_space_0(tag(")"))),
         ))),
     ))(input)?;
-    if let Some(params) = params {
+    if let Some((_, params, _)) = params {
+        let params = params.into_iter().map(Box::new).collect();
         Ok((
             r,
-            Expression::FunctionCall(Box::new(Expression::Identifier(ident.fragment())), vec![]),
+            Expression::FunctionCall(Box::new(Expression::Identifier(ident.fragment())), params),
         ))
     } else {
         Ok((r, Expression::Identifier(ident.fragment())))
     }
+}
+
+pub fn parse_function_call_parameters(input: Span) -> IResult<Span, Vec<Expression>> {
+    tailing_separator_list_0(",", parse_expression)(input)
 }
 
 pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
@@ -250,7 +253,7 @@ mod test {
 
     mod r#type {
         use crate::ast::{PlainType, Type};
-        use crate::parser::{parse_plain_type, parse_type, Span};
+        use crate::parser::parse_type;
 
         #[test]
         fn should_parse_plain_type() {
@@ -318,7 +321,7 @@ mod test {
 
     mod function {
         use crate::ast::{PlainType, Type};
-        use crate::parser::{parse_function_parameter, parse_function_parameters, Span};
+        use crate::parser::{parse_function_parameter, parse_function_parameters};
 
         #[test]
         fn should_parse_function_parameter() {
@@ -414,6 +417,7 @@ mod test {
                 assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct) -> i32 {}"}
             }
         }
+
         #[test]
         fn should_parse_with_trailing_comma() {
             let declare = FunctionDeclare {
@@ -434,7 +438,7 @@ mod test {
 
     mod expression {
         use crate::ast::{Block, Expression};
-        use crate::parser::{parse_expression, parse_single_expression};
+        use crate::parser::parse_expression;
 
         #[test]
         fn should_parse_block() {
@@ -484,19 +488,49 @@ mod test {
                 "fmt.printLn()"
             }
 
-            assert_parse! {
-                Expression::FunctionCall(
-                    Box::new(Expression::FieldAccess(
-                        Box::new(Expression::FunctionCall(
-                            Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("a")))), vec![]
-                        )),
-                        Box::new(Expression::Identifier("b"))
+            let expr = Expression::FunctionCall(
+                Box::new(Expression::FieldAccess(
+                    Box::new(Expression::FunctionCall(
+                        Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("a")))), vec![],
                     )),
-                    vec![]
-                )
-                , parse_expression,
+                    Box::new(Expression::Identifier("b")),
+                )),
+                vec![],
+            );
+            assert_parse! { expr, parse_expression,
                 "fmt.a().b()"
             }
         }
+
+        #[test]
+        fn should_parse_function_call_with_params() {
+            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
+                Box::new(Expression::Identifier("a"))
+            ]);
+
+            assert_parse! { expr, parse_expression,
+                "func(a)"
+            }
+
+            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
+                Box::new(Expression::Identifier("a")),
+                Box::new(Expression::Identifier("b"))
+            ]);
+
+            assert_parse! { expr, parse_expression,
+                "func(a,b)"
+            }
+
+            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
+                Box::new(Expression::Identifier("a")),
+                Box::new(Expression::Identifier("b"))
+            ]);
+
+            assert_parse! { expr, parse_expression,
+                "func(a,b,)"
+            }
+        }
+
+
     }
 }
