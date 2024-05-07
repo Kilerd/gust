@@ -1,17 +1,14 @@
-use nom::{InputTakeAtPosition, IResult, Parser};
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{
-    alpha1, alphanumeric1, line_ending, space0,
-};
-use nom::combinator::{map, opt, recognize};
+use nom::character::complete::{alpha1, alphanumeric1, digit1, line_ending, space0};
+use nom::character::streaming::alphanumeric0;
+use nom::combinator::{map, map_res, opt, recognize};
 use nom::multi::{many0, many1, separated_list0, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
+use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
 
-use crate::ast::{
-    Block, Expression, FunctionDeclare, Import, Item, PlainType, Statement, Type,
-};
+use crate::ast::{Block, Expression, FunctionDeclare, Import, Item, PlainType, Statement, Type};
 use crate::parser::helpers::{
     leading_space_0, tailing_separator_list_0, tailing_space_0, tailing_space_1,
 };
@@ -62,13 +59,15 @@ pub fn parse_function_declare(input: Span) -> IResult<Span, FunctionDeclare> {
     Ok((r, declare))
 }
 
+/// ```syntax
+/// use fmt;
+/// use fmt::function;
+/// use fmt::{function, function};
+/// ```
 pub fn parse_import(input: Span) -> IResult<Span, Import> {
     let (res, (module, items)) = delimited(
         helpers::tailing_space_1(tag("use")),
-        tuple((
-            alpha1,
-            opt(parse_import_items),
-        )),
+        tuple((alpha1, opt(parse_import_items))),
         helpers::leading_space_0(tag(";")),
     )(input)?;
     Ok((
@@ -80,30 +79,50 @@ pub fn parse_import(input: Span) -> IResult<Span, Import> {
     ))
 }
 
+/// ```syntax
+/// ::function
+/// ::{function, function}
+/// ```
 pub fn parse_import_items(input: Span) -> IResult<Span, Vec<String>> {
     let (res, key) = preceded(
         tailing_space_0(tag("::")),
         alt((
-            map(alpha1, |it|vec![it]),
+            map(alpha1, |it| vec![it]),
             delimited(
                 tailing_space_0(tag("{")),
                 tailing_separator_list_0(",", alpha1),
                 tailing_space_0(tag("}")),
-            )
+            ),
         )),
     )(input)?;
     Ok((
         res,
-        key.into_iter().map(|it|it.fragment().to_string()).collect()
+        key.into_iter()
+            .map(|it| it.fragment().to_string())
+            .collect(),
     ))
 }
 
-/// TYPE = POINTER | REFERENCE | PLAIN_TYPE
+/// TYPE = POINTER | REFERENCE | PLAIN_TYPE | PRIMITIVE_TYPE
 pub fn parse_type(input: Span) -> IResult<Span, Type> {
     alt((
         parse_pointer,
         parse_reference,
         map(tag("()"), |_| Type::Unit),
+        map(tag("String"), |_| Type::String),
+        map(tag("boolean"), |_| Type::Bool),
+        map(tag("isize"), |_| Type::Isize),
+        map(tag("i8"), |_| Type::Int8),
+        map(tag("i16"), |_| Type::Int16),
+        map(tag("i32"), |_| Type::Int32),
+        map(tag("i64"), |_| Type::Int64),
+        map(tag("usize"), |_| Type::Usize),
+        map(tag("u8"), |_| Type::Unt8),
+        map(tag("u16"), |_| Type::Unt16),
+        map(tag("u32"), |_| Type::Unt32),
+        map(tag("u64"), |_| Type::Unt64),
+        map(tag("f32"), |_| Type::Float32),
+        map(tag("f64"), |_| Type::Float64),
         map(parse_plain_type, |ty| Type::Plain(ty)),
     ))(input)
 }
@@ -132,6 +151,33 @@ pub fn parse_plain_type(input: Span) -> IResult<Span, PlainType> {
 /// TYPE_IDENTIFIER = alpha ~ ("_" | alphanumber)*
 pub fn parse_type_identifier(input: Span) -> IResult<Span, Span> {
     recognize(tuple((alpha1, many0(alt((tag("_"), alphanumeric1))))))(input)
+}
+
+/// ATOM = IDENTIFIER | BOOL
+pub fn parse_atom(input: Span) -> IResult<Span, Expression> {
+    alt((
+        map(parse_identifier, |it| {
+            Expression::Identifier(it.fragment().to_string())
+        }),
+        parse_bool,
+        parse_number,
+    ))(input)
+}
+
+/// BOOL = true | false
+pub fn parse_bool(input: Span) -> IResult<Span, Expression> {
+    alt((
+        map(tag("true"), |_| Expression::Bool(true)),
+        map(tag("false"), |_| Expression::Bool(false)),
+    ))(input)
+}
+
+/// NUMBER = MINUS? ~ PRIMITIVE_NUMBER ~ POSTFIX?
+/// todo: handle float and uninteger
+pub fn parse_number(input: Span) -> IResult<Span, Expression> {
+    map(recognize(tuple((opt(tag("-")), digit1))), |it: Span| {
+        Expression::Number(it.fragment().to_string().parse::<i32>().unwrap())
+    })(input)
 }
 
 /// IDENTIFIER = "_"? ~ ("_" | alphanumber)*
@@ -172,10 +218,13 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
         let params = params.into_iter().map(Box::new).collect();
         Ok((
             r,
-            Expression::FunctionCall(Box::new(Expression::Identifier(ident.fragment())), params),
+            Expression::FunctionCall(
+                Box::new(Expression::Identifier(ident.fragment().to_string())),
+                params,
+            ),
         ))
     } else {
-        Ok((r, Expression::Identifier(ident.fragment())))
+        Ok((r, Expression::Identifier(ident.fragment().to_string())))
     }
 }
 
@@ -209,13 +258,11 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
             let option = exprs.into_iter().fold(None, |acc, item| {
                 if let Some(prev) = acc {
                     match item {
-                        Expression::FunctionCall(fc, params) => {
-                            Some(Expression::FunctionCall(
-                                Box::new(Expression::FieldAccess(Box::new(prev), fc))
-                                , params,
-                            ))
-                        }
-                        _ => { Some(Expression::FieldAccess(Box::new(prev), Box::new(item))) }
+                        Expression::FunctionCall(fc, params) => Some(Expression::FunctionCall(
+                            Box::new(Expression::FieldAccess(Box::new(prev), fc)),
+                            params,
+                        )),
+                        _ => Some(Expression::FieldAccess(Box::new(prev), Box::new(item))),
                     }
                 } else {
                     Some(item)
@@ -340,6 +387,11 @@ mod test {
                 "()"
             }
         }
+
+        #[test]
+        fn primitive_type() {
+            assert_parse! {Type::Bool, parse_type, "boolean" };
+        }
     }
 
     mod identifier {
@@ -428,9 +480,7 @@ mod test {
             let declare = FunctionDeclare {
                 ident: "main",
                 parameters: vec![],
-                ret_type: Type::Plain(PlainType {
-                    name: "i32".to_owned(),
-                }),
+                ret_type: Type::Int32,
                 block: Block {
                     statements: vec![],
                     expr: None,
@@ -446,7 +496,12 @@ mod test {
             fn should_parse_empty_function_with_i32_return_type() {
                 let declare = FunctionDeclare {
                     ident: "main",
-                    parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
+                    parameters: vec![(
+                        "my",
+                        Type::Plain(PlainType {
+                            name: "MyStruct".to_owned(),
+                        }),
+                    )],
                     ret_type: Type::Plain(PlainType {
                         name: "i32".to_owned(),
                     }),
@@ -458,10 +513,22 @@ mod test {
 
                 assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct) -> i32 {}"}
 
-
                 let declare = FunctionDeclare {
                     ident: "main",
-                    parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() })), ("my2", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
+                    parameters: vec![
+                        (
+                            "my",
+                            Type::Plain(PlainType {
+                                name: "MyStruct".to_owned(),
+                            }),
+                        ),
+                        (
+                            "my2",
+                            Type::Plain(PlainType {
+                                name: "MyStruct".to_owned(),
+                            }),
+                        ),
+                    ],
                     ret_type: Type::Plain(PlainType {
                         name: "i32".to_owned(),
                     }),
@@ -479,10 +546,21 @@ mod test {
         fn should_parse_with_trailing_comma() {
             let declare = FunctionDeclare {
                 ident: "main",
-                parameters: vec![("my", Type::Plain(PlainType { name: "MyStruct".to_owned() })), ("my2", Type::Plain(PlainType { name: "MyStruct".to_owned() }))],
-                ret_type: Type::Plain(PlainType {
-                    name: "i32".to_owned(),
-                }),
+                parameters: vec![
+                    (
+                        "my",
+                        Type::Plain(PlainType {
+                            name: "MyStruct".to_owned(),
+                        }),
+                    ),
+                    (
+                        "my2",
+                        Type::Plain(PlainType {
+                            name: "MyStruct".to_owned(),
+                        }),
+                    ),
+                ],
+                ret_type: Type::Int32,
                 block: Block {
                     statements: vec![],
                     expr: None,
@@ -506,51 +584,92 @@ mod test {
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse! {Expression::Identifier("my_struct"), parse_expression,
+            assert_parse! {Expression::Identifier("my_struct".to_string()), parse_expression,
                 "my_struct"
             }
         }
 
         #[test]
         fn should_parse_field_access() {
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a"))), parse_expression,
+            let expr = Expression::FieldAccess(
+                Box::new(Expression::Identifier("my_struct".to_string())),
+                Box::new(Expression::Identifier("a".to_string())),
+            );
+            assert_parse! {expr, parse_expression,
                 "my_struct.a"
             }
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))), Box::new(Expression::Identifier("b"))), parse_expression,
+            let expr = Expression::FieldAccess(
+                Box::new(Expression::FieldAccess(
+                    Box::new(Expression::Identifier("my_struct".to_string())),
+                    Box::new(Expression::Identifier("a".to_string())),
+                )),
+                Box::new(Expression::Identifier("b".to_string())),
+            );
+            assert_parse! {expr, parse_expression,
                 "my_struct.a.b"
             }
         }
 
         #[test]
         fn should_arse_group_expression() {
-            assert_parse! {Expression::Group(Box::new(Expression::Identifier("my_struct"))), parse_expression,
+            let expr = Expression::Group(Box::new(Expression::Identifier("my_struct".to_string())));
+            assert_parse! {expr, parse_expression,
                 "(my_struct)"
             }
-            assert_parse! {Expression::FieldAccess(Box::new(Expression::Group(Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("my_struct")), Box::new(Expression::Identifier("a")))))), Box::new(Expression::Identifier("b"))), parse_expression,
+            let expr = Expression::FieldAccess(
+                Box::new(Expression::Group(Box::new(Expression::FieldAccess(
+                    Box::new(Expression::Identifier("my_struct".to_string())),
+                    Box::new(Expression::Identifier("a".to_string())),
+                )))),
+                Box::new(Expression::Identifier("b".to_string())),
+            );
+            assert_parse! {expr, parse_expression,
                 "(my_struct.a).b"
             }
         }
 
         #[test]
         fn should_parse_function_call() {
-            assert_parse! { Expression::FieldAccess(Box::new(Expression::FunctionCall(Box::new(Expression::Identifier("a")), vec![])), Box::new(Expression::Identifier("b"))), parse_expression,
+            let expr = Expression::FieldAccess(
+                Box::new(Expression::FunctionCall(
+                    Box::new(Expression::Identifier("a".to_string())),
+                    vec![],
+                )),
+                Box::new(Expression::Identifier("b".to_string())),
+            );
+            assert_parse! { expr, parse_expression,
                 "a().b"
             }
-            assert_parse! { Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![]), parse_expression,
+
+            let expr = Expression::FunctionCall(
+                Box::new(Expression::Identifier("func".to_string())),
+                vec![],
+            );
+            assert_parse! { expr, parse_expression,
                 "func()"
             }
-            assert_parse! { Expression::FunctionCall(
-                Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("printLn")))), vec![]
-            ), parse_expression,
+
+            let expr = Expression::FunctionCall(
+                Box::new(Expression::FieldAccess(
+                    Box::new(Expression::Identifier("fmt".to_string())),
+                    Box::new(Expression::Identifier("printLn".to_string())),
+                )),
+                vec![],
+            );
+            assert_parse! {expr, parse_expression,
                 "fmt.printLn()"
             }
 
             let expr = Expression::FunctionCall(
                 Box::new(Expression::FieldAccess(
                     Box::new(Expression::FunctionCall(
-                        Box::new(Expression::FieldAccess(Box::new(Expression::Identifier("fmt")), Box::new(Expression::Identifier("a")))), vec![],
+                        Box::new(Expression::FieldAccess(
+                            Box::new(Expression::Identifier("fmt".to_string())),
+                            Box::new(Expression::Identifier("a".to_string())),
+                        )),
+                        vec![],
                     )),
-                    Box::new(Expression::Identifier("b")),
+                    Box::new(Expression::Identifier("b".to_string())),
                 )),
                 vec![],
             );
@@ -561,18 +680,22 @@ mod test {
 
         #[test]
         fn should_parse_function_call_with_params() {
-            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
-                Box::new(Expression::Identifier("a"))
-            ]);
+            let expr = Expression::FunctionCall(
+                Box::new(Expression::Identifier("func".to_string())),
+                vec![Box::new(Expression::Identifier("a".to_string()))],
+            );
 
             assert_parse! { expr, parse_expression,
                 "func(a)"
             }
 
-            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
-                Box::new(Expression::Identifier("a")),
-                Box::new(Expression::Identifier("b")),
-            ]);
+            let expr = Expression::FunctionCall(
+                Box::new(Expression::Identifier("func".to_string())),
+                vec![
+                    Box::new(Expression::Identifier("a".to_string())),
+                    Box::new(Expression::Identifier("b".to_string())),
+                ],
+            );
 
             assert_parse! { expr, parse_expression,
                 "func(a,b)"
@@ -581,6 +704,16 @@ mod test {
             assert_parse! { expr, parse_expression,
                 "func(a,b,)"
             }
+        }
+    }
+
+    mod number {
+        use crate::ast::Expression;
+        use crate::parser::parse_number;
+
+        #[test]
+        fn primitive_number() {
+            assert_parse! {Expression::Number(1), parse_number, "1"}
         }
     }
 }

@@ -8,8 +8,8 @@ pub enum Item<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Statement<'a> {
-    Expr(Expression<'a>),
+pub enum Statement {
+    Expr(Expression),
 }
 
 /// ```gust
@@ -20,7 +20,7 @@ pub enum Statement<'a> {
 #[derive(Debug, PartialEq)]
 pub struct Import {
     pub module: String,
-    pub items:Vec<String>
+    pub items: Vec<String>,
 }
 
 pub type Parameter<'a> = (&'a str, Type);
@@ -35,7 +35,7 @@ pub struct FunctionDeclare<'a> {
     pub ident: &'a str,
     pub parameters: Vec<Parameter<'a>>,
     pub ret_type: Type,
-    pub block: Block<'a>,
+    pub block: Block,
 }
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Hash, Clone, Copy)]
@@ -57,20 +57,21 @@ pub enum Opcode {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Expression<'a> {
+pub enum Expression {
     String(String),
-    Block(Box<Block<'a>>),
-    Identifier(&'a str),
-    FieldAccess(Box<Expression<'a>>, Box<Expression<'a>>),
+    Block(Box<Block>),
+    Identifier(String),
+    FieldAccess(Box<Expression>, Box<Expression>),
     Number(i32),
-    BinOperation(Opcode, Box<Expression<'a>>, Box<Expression<'a>>),
+    Bool(bool),
+    BinOperation(Opcode, Box<Expression>, Box<Expression>),
     If {
-        condition: Box<Expression<'a>>,
-        then_body: Box<Expression<'a>>,
-        else_body: Box<Expression<'a>>,
+        condition: Box<Expression>,
+        then_body: Box<Expression>,
+        else_body: Box<Expression>,
     },
-    FunctionCall(Box<Expression<'a>>, Vec<Box<Expression<'a>>>),
-    Group(Box<Expression<'a>>),
+    FunctionCall(Box<Expression>, Vec<Box<Expression>>),
+    Group(Box<Expression>),
     Negative(Box<i32>),
 }
 
@@ -81,6 +82,24 @@ pub enum Type {
     Array(Box<Type>),
     Plain(PlainType),
     Unit,
+    Bool,
+
+    String,
+
+    Isize,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+
+    Usize,
+    Unt8,
+    Unt16,
+    Unt32,
+    Unt64,
+
+    Float32,
+    Float64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -89,7 +108,7 @@ pub struct PlainType {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Block<'a> {
-    pub statements: Vec<Statement<'a>>,
-    pub expr: Option<Expression<'a>>,
+pub struct Block {
+    pub statements: Vec<Statement>,
+    pub expr: Option<Expression>,
 }
