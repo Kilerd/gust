@@ -5,7 +5,7 @@ use nom::character::complete::{
     alpha1, alphanumeric1, line_ending, space0,
 };
 use nom::combinator::{map, opt, recognize};
-use nom::multi::{many0, many1, separated_list1};
+use nom::multi::{many0, many1, separated_list0, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom_locate::LocatedSpan;
 
@@ -63,16 +63,38 @@ pub fn parse_function_declare(input: Span) -> IResult<Span, FunctionDeclare> {
 }
 
 pub fn parse_import(input: Span) -> IResult<Span, Import> {
-    let (res, key) = delimited(
+    let (res, (module, items)) = delimited(
         helpers::tailing_space_1(tag("use")),
-        alpha1,
+        tuple((
+            alpha1,
+            opt(parse_import_items),
+        )),
         helpers::leading_space_0(tag(";")),
     )(input)?;
     Ok((
         res,
         Import {
-            name: key.fragment().to_string(),
+            module: module.fragment().to_string(),
+            items: items.unwrap_or_default(),
         },
+    ))
+}
+
+pub fn parse_import_items(input: Span) -> IResult<Span, Vec<String>> {
+    let (res, key) = preceded(
+        tailing_space_0(tag("::")),
+        alt((
+            map(alpha1, |it|vec![it]),
+            delimited(
+                tailing_space_0(tag("{")),
+                tailing_separator_list_0(",", alpha1),
+                tailing_space_0(tag("}")),
+            )
+        )),
+    )(input)?;
+    Ok((
+        res,
+        key.into_iter().map(|it|it.fragment().to_string()).collect()
     ))
 }
 
@@ -249,6 +271,41 @@ mod test {
             assert_eq!(&"", res.fragment(), "content leave should be empty");
             assert_eq!(&$expected, output.fragment());
         };
+    }
+
+    mod import {
+        use crate::ast::Import;
+        use crate::parser::parse_import;
+
+        #[test]
+        fn import_whole_module() {
+            let import = Import {
+                module: "fmt".to_string(),
+                items: vec![],
+            };
+            assert_parse! { import, parse_import,
+                "use fmt;"
+            }
+        }
+
+        #[test]
+        fn import_items() {
+            let import = Import {
+                module: "fmt".to_string(),
+                items: vec!["println".to_string()],
+            };
+            assert_parse! { import, parse_import,
+                "use fmt::println;"
+            }
+
+            let import = Import {
+                module: "fmt".to_string(),
+                items: vec!["println".to_string(), "print".to_string()],
+            };
+            assert_parse! { import, parse_import,
+                "use fmt::{println, print};"
+            }
+        }
     }
 
     mod r#type {
@@ -514,23 +571,16 @@ mod test {
 
             let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
                 Box::new(Expression::Identifier("a")),
-                Box::new(Expression::Identifier("b"))
+                Box::new(Expression::Identifier("b")),
             ]);
 
             assert_parse! { expr, parse_expression,
                 "func(a,b)"
             }
 
-            let expr = Expression::FunctionCall(Box::new(Expression::Identifier("func")), vec![
-                Box::new(Expression::Identifier("a")),
-                Box::new(Expression::Identifier("b"))
-            ]);
-
             assert_parse! { expr, parse_expression,
                 "func(a,b,)"
             }
         }
-
-
     }
 }

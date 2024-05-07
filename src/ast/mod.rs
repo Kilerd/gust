@@ -17,8 +17,10 @@ pub enum Statement<'a> {
 /// use fmt::println;
 /// use fmt::{println, print};
 /// ```
+#[derive(Debug, PartialEq)]
 pub struct Import {
-    pub name: String,
+    pub module: String,
+    pub items:Vec<String>
 }
 
 pub type Parameter<'a> = (&'a str, Type);
