@@ -715,5 +715,9 @@ mod test {
         fn primitive_number() {
             assert_parse! {Expression::Number(1), parse_number, "1"}
         }
+        #[test]
+        fn negative_number() {
+            assert_parse! {Expression::Number(-1), parse_number, "-1"}
+        }
     }
 }
