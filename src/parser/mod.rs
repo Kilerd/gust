@@ -1,9 +1,8 @@
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{alpha1, alphanumeric1, digit1, line_ending, space0};
-use nom::character::streaming::alphanumeric0;
 use nom::combinator::{map, map_res, opt, recognize};
-use nom::multi::{many0, many1, separated_list0, separated_list1};
+use nom::multi::{many0, many1,  separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
@@ -220,7 +219,7 @@ pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
             )),
             opt(preceded(
                 surrounding_space_0(tag("=")),
-                parse_single_expression
+                parse_expression
             ))
         )),
         surrounding_space_0(tag(";"))
@@ -237,7 +236,7 @@ pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
 }
 
 pub fn parse_statement_expr(input: Span) -> IResult<Span, Statement> {
-    map(terminated(parse_single_expression, tag(";")), |expr| {
+    map(terminated(parse_expression, tag(";")), |expr| {
         Statement::Expr(expr)
     })(input)
 }
@@ -266,10 +265,10 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
 }
 
 pub fn parse_function_call_parameters(input: Span) -> IResult<Span, Vec<Expression>> {
-    tailing_separator_list_0(",", parse_single_expression)(input)
+    tailing_separator_list_0(",", parse_expression)(input)
 }
 
-pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
+pub fn parse_expression(input: Span) -> IResult<Span, Expression> {
     alt((
         map(parse_block, |block| Expression::Block(Box::new(block))),
         parse_field_access,
@@ -279,7 +278,7 @@ pub fn parse_single_expression(input: Span) -> IResult<Span, Expression> {
 pub fn parse_group_expression(input: Span) -> IResult<Span, Expression> {
     let (r, (_, expr, _)) = tuple((
         leading_space_0(tailing_space_0(tag("("))),
-        parse_single_expression,
+        parse_expression,
         leading_space_0(tailing_space_0(tag(")"))),
     ))(input)?;
     let expr = Expression::Group(Box::new(expr));
@@ -315,7 +314,7 @@ pub fn parse_block(input: Span) -> IResult<Span, Block> {
     let (r, (_, statements, expr, _)) = tuple((
         tailing_space_0(tag("{")),
         many0(parse_statement),
-        opt(parse_single_expression),
+        opt(parse_expression),
         tailing_space_0(tag("}")),
     ))(input)?;
 
@@ -665,18 +664,18 @@ mod test {
 
     mod expression {
         use crate::ast::{Block, Expression};
-        use crate::parser::parse_single_expression;
+        use crate::parser::parse_expression;
 
         #[test]
         fn should_parse_block() {
-            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_single_expression,
+            assert_parse! {Expression::Block(Box::new(Block{ statements: vec![], expr: None })), parse_expression,
                 "{}"
             }
         }
 
         #[test]
         fn should_parse_identifier() {
-            assert_parse! {Expression::Identifier("my_struct".to_string()), parse_single_expression,
+            assert_parse! {Expression::Identifier("my_struct".to_string()), parse_expression,
                 "my_struct"
             }
         }
@@ -687,7 +686,7 @@ mod test {
                 Box::new(Expression::Identifier("my_struct".to_string())),
                 Box::new(Expression::Identifier("a".to_string())),
             );
-            assert_parse! {expr, parse_single_expression,
+            assert_parse! {expr, parse_expression,
                 "my_struct.a"
             }
             let expr = Expression::FieldAccess(
@@ -697,7 +696,7 @@ mod test {
                 )),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! {expr, parse_single_expression,
+            assert_parse! {expr, parse_expression,
                 "my_struct.a.b"
             }
         }
@@ -705,7 +704,7 @@ mod test {
         #[test]
         fn should_arse_group_expression() {
             let expr = Expression::Group(Box::new(Expression::Identifier("my_struct".to_string())));
-            assert_parse! {expr, parse_single_expression,
+            assert_parse! {expr, parse_expression,
                 "(my_struct)"
             }
             let expr = Expression::FieldAccess(
@@ -715,7 +714,7 @@ mod test {
                 )))),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! {expr, parse_single_expression,
+            assert_parse! {expr, parse_expression,
                 "(my_struct.a).b"
             }
         }
@@ -729,7 +728,7 @@ mod test {
                 )),
                 Box::new(Expression::Identifier("b".to_string())),
             );
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "a().b"
             }
 
@@ -737,7 +736,7 @@ mod test {
                 Box::new(Expression::Identifier("func".to_string())),
                 vec![],
             );
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "func()"
             }
 
@@ -748,7 +747,7 @@ mod test {
                 )),
                 vec![],
             );
-            assert_parse! {expr, parse_single_expression,
+            assert_parse! {expr, parse_expression,
                 "fmt.printLn()"
             }
 
@@ -765,7 +764,7 @@ mod test {
                 )),
                 vec![],
             );
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "fmt.a().b()"
             }
         }
@@ -777,7 +776,7 @@ mod test {
                 vec![Box::new(Expression::Identifier("a".to_string()))],
             );
 
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "func(a)"
             }
 
@@ -789,11 +788,11 @@ mod test {
                 ],
             );
 
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "func(a,b)"
             }
 
-            assert_parse! { expr, parse_single_expression,
+            assert_parse! { expr, parse_expression,
                 "func(a,b,)"
             }
         }
