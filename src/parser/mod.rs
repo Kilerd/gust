@@ -1,10 +1,11 @@
+use nom::{InputTakeAtPosition, IResult, Parser};
 use nom::branch::alt;
-use nom::bytes::complete::tag;
-use nom::character::complete::{alpha1, alphanumeric1, digit1, line_ending, space0};
-use nom::combinator::{map, map_res, opt, recognize, value};
+use nom::bytes::complete::{escaped, tag};
+use nom::character::complete::{alpha1, alphanumeric1, char, digit1, line_ending, one_of, space0};
+use nom::combinator::{cut, map, opt, recognize};
+use nom::error::context;
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
-use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
 
 use crate::ast::{
@@ -156,16 +157,35 @@ pub fn parse_type_identifier(input: Span) -> IResult<Span, Span> {
     recognize(tuple((alpha1, many0(alt((tag("_"), alphanumeric1))))))(input)
 }
 
-/// ATOM = IDENTIFIER | BOOL
+/// ATOM = IDENTIFIER | BOOL | NUMBER | GROUP | STRING
 pub fn parse_atom(input: Span) -> IResult<Span, Expression> {
     alt((
         parse_bool,
         parse_number,
+        parse_string,
         map(parse_identifier, |it| {
             Expression::Identifier(it.fragment().to_string())
         }),
         parse_group_expression,
     ))(input)
+}
+
+
+/// STRING
+///
+/// todo: unicode support
+pub fn parse_string(input: Span) -> IResult<Span, Expression> {
+    let (res, s) = context(
+        "string",
+        preceded(char('\"'), cut(terminated(parse_string_inner, char('\"')))),
+    )
+        .parse(input)?;
+    let expr = Expression::String(s.fragment().to_string());
+    Ok((res, expr))
+
+}
+fn parse_string_inner(input: Span) -> IResult<Span, Span> {
+    escaped(alphanumeric1, '\\', one_of("\"n\\"))(input)
 }
 
 /// BOOL = true | false
@@ -816,6 +836,20 @@ mod test {
 
             assert_parse! { expr, parse_expression,
                 "func(a,b,)"
+            }
+        }
+
+        mod string {
+            use crate::ast::Expression;
+            use crate::parser::parse_expression;
+
+            #[test]
+            fn alphanumeric() {
+                let expr = Expression::String("123".to_string());
+                assert_parse!{ expr, parse_expression, r#""123""#}
+
+                let expr = Expression::String("a123".to_string());
+                assert_parse!{ expr, parse_expression, r#""a123""#}
             }
         }
     }
