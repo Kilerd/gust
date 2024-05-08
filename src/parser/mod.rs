@@ -1,13 +1,16 @@
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{alpha1, alphanumeric1, digit1, line_ending, space0};
-use nom::combinator::{map, map_res, opt, recognize};
-use nom::multi::{many0, many1,  separated_list1};
+use nom::combinator::{map, map_res, opt, recognize, value};
+use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
 
-use crate::ast::{Block, Expression, FunctionDeclare, Import, Item, LetStatement, PlainType, Statement, Type};
+use crate::ast::{
+    Assignment, Block, Expression, FunctionDeclare, Import, Item, LetStatement, PlainType,
+    Statement, Type,
+};
 use crate::parser::helpers::{
     leading_space_0, surrounding_space_0, surrounding_space_1, tailing_separator_list_0,
     tailing_space_0, tailing_space_1,
@@ -158,11 +161,10 @@ pub fn parse_atom(input: Span) -> IResult<Span, Expression> {
     alt((
         parse_bool,
         parse_number,
-
         map(parse_identifier, |it| {
             Expression::Identifier(it.fragment().to_string())
         }),
-        parse_group_expression
+        parse_group_expression,
     ))(input)
 }
 
@@ -202,9 +204,12 @@ pub fn parse_function_parameters(input: Span) -> IResult<Span, Vec<(&str, Type)>
 }
 
 pub fn parse_statement(input: Span) -> IResult<Span, Statement> {
-    alt((parse_statement_let, parse_statement_expr))(input)
+    alt((
+        parse_statement_let,
+        parse_statement_assignment,
+        parse_statement_expr,
+    ))(input)
 }
-
 
 /// LET_STATEMENT = let ~ mut? ~ identifier ~ ": ttype"? ~ (= value)? ~ ;
 pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
@@ -213,16 +218,10 @@ pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
         tuple((
             opt(surrounding_space_1(tag("mut"))),
             parse_identifier,
-            opt(preceded(
-                surrounding_space_0(tag(":")),
-                parse_type,
-            )),
-            opt(preceded(
-                surrounding_space_0(tag("=")),
-                parse_expression
-            ))
+            opt(preceded(surrounding_space_0(tag(":")), parse_type)),
+            opt(preceded(surrounding_space_0(tag("=")), parse_expression)),
         )),
-        surrounding_space_0(tag(";"))
+        surrounding_space_0(tag(";")),
     )(input)?;
 
     let let_stats = Statement::LetStatement(LetStatement {
@@ -233,6 +232,23 @@ pub fn parse_statement_let(input: Span) -> IResult<Span, Statement> {
     });
 
     Ok((res, let_stats))
+}
+
+/// ASSIGNMENT_STATEMENT =  identifier ~ = ~ value ~ ;
+pub fn parse_statement_assignment(input: Span) -> IResult<Span, Statement> {
+    let (res, (ident, _, value, _)) = tuple((
+        parse_identifier,
+        surrounding_space_0(tag("=")),
+        parse_expression,
+        surrounding_space_0(tag(";")),
+    ))(input)?;
+
+    let assignment_stats = Statement::Assignment(Assignment {
+        identifier: ident.fragment().to_string(),
+        value,
+    });
+
+    Ok((res, assignment_stats))
 }
 
 pub fn parse_statement_expr(input: Span) -> IResult<Span, Statement> {
@@ -252,13 +268,7 @@ pub fn parse_identifier_or_function_call(input: Span) -> IResult<Span, Expressio
     ))(input)?;
     if let Some((_, params, _)) = params {
         let params = params.into_iter().map(Box::new).collect();
-        Ok((
-            r,
-            Expression::FunctionCall(
-                Box::new(ident),
-                params,
-            ),
-        ))
+        Ok((r, Expression::FunctionCall(Box::new(ident), params)))
     } else {
         Ok((r, ident))
     }
@@ -308,7 +318,6 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
     };
     Ok((r, expr))
 }
-
 
 pub fn parse_block(input: Span) -> IResult<Span, Block> {
     let (r, (_, statements, expr, _)) = tuple((
@@ -394,54 +403,74 @@ mod test {
 
             #[test]
             fn let_with_value() {
-                let stats = Statement::LetStatement(LetStatement{
+                let stats = Statement::LetStatement(LetStatement {
                     mutable: false,
                     identifier: "a".to_string(),
                     ttype: None,
                     value: Some(Expression::Number(1)),
                 });
-                assert_parse!{stats, parse_statement, "let a = 1;"}
-                assert_parse!{stats, parse_statement, "let a=1;"}
-                assert_parse!{stats, parse_statement, "let a= 1;"}
-                assert_parse!{stats, parse_statement, "let a =1;"}
+                assert_parse! {stats, parse_statement, "let a = 1;"}
+                assert_parse! {stats, parse_statement, "let a=1;"}
+                assert_parse! {stats, parse_statement, "let a= 1;"}
+                assert_parse! {stats, parse_statement, "let a =1;"}
             }
 
             #[test]
             fn let_without_value() {
-                let stats = Statement::LetStatement(LetStatement{
+                let stats = Statement::LetStatement(LetStatement {
                     mutable: false,
                     identifier: "a".to_string(),
                     ttype: None,
                     value: None,
                 });
-                assert_parse!{stats, parse_statement, "let a;"}
-                assert_parse!{stats, parse_statement, "let a ;"}
+                assert_parse! {stats, parse_statement, "let a;"}
+                assert_parse! {stats, parse_statement, "let a ;"}
             }
 
             #[test]
             fn let_with_ttype() {
-                let stats = Statement::LetStatement(LetStatement{
+                let stats = Statement::LetStatement(LetStatement {
                     mutable: false,
                     identifier: "a".to_string(),
                     ttype: Some(Type::Int32),
                     value: None,
                 });
-                assert_parse!{stats, parse_statement, "let a: i32;"}
-                assert_parse!{stats, parse_statement, "let a : i32 ;"}
-                assert_parse!{stats, parse_statement, "let a :i32 ;"}
+                assert_parse! {stats, parse_statement, "let a: i32;"}
+                assert_parse! {stats, parse_statement, "let a : i32 ;"}
+                assert_parse! {stats, parse_statement, "let a :i32 ;"}
             }
             #[test]
             fn let_with_ttype_and_value() {
-                let stats = Statement::LetStatement(LetStatement{
+                let stats = Statement::LetStatement(LetStatement {
                     mutable: false,
                     identifier: "a".to_string(),
                     ttype: Some(Type::Int32),
                     value: Some(Expression::Number(1)),
                 });
-                assert_parse!{stats, parse_statement, "let a:i32 = 1;"}
-                assert_parse!{stats, parse_statement, "let a : i32=1;"}
-                assert_parse!{stats, parse_statement, "let a: i32 = 1;"}
-                assert_parse!{stats, parse_statement, "let a :i32 =1;"}
+                assert_parse! {stats, parse_statement, "let a:i32 = 1;"}
+                assert_parse! {stats, parse_statement, "let a : i32=1;"}
+                assert_parse! {stats, parse_statement, "let a: i32 = 1;"}
+                assert_parse! {stats, parse_statement, "let a :i32 =1;"}
+            }
+        }
+
+        mod assignment {
+            use crate::ast::{Assignment, Expression, Statement};
+            use crate::parser::parse_statement;
+
+            #[test]
+            fn assignment_statement() {
+                let stats = Statement::Assignment(Assignment {
+                    identifier: "a".to_string(),
+                    value: Expression::Bool(true),
+                });
+                assert_parse! {stats, parse_statement, "a = true;"}
+
+                let stats = Statement::Assignment(Assignment {
+                    identifier: "a".to_string(),
+                    value: Expression::Identifier("b".to_string()),
+                });
+                assert_parse! {stats, parse_statement, "a = b;"}
             }
         }
     }
@@ -582,55 +611,48 @@ mod test {
         }
 
         #[test]
-        fn should_parse_function_params() {
-            #[test]
-            fn should_parse_empty_function_with_i32_return_type() {
-                let declare = FunctionDeclare {
-                    ident: "main",
-                    parameters: vec![(
+        fn should_parse_empty_function_with_params_and_return_type() {
+            let declare = FunctionDeclare {
+                ident: "main",
+                parameters: vec![(
+                    "my",
+                    Type::Plain(PlainType {
+                        name: "MyStruct".to_owned(),
+                    }),
+                )],
+                ret_type: Type::Int32,
+                block: Block {
+                    statements: vec![],
+                    expr: None,
+                },
+            };
+
+            assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct) -> i32 {}"}
+
+            let declare = FunctionDeclare {
+                ident: "main",
+                parameters: vec![
+                    (
                         "my",
                         Type::Plain(PlainType {
                             name: "MyStruct".to_owned(),
                         }),
-                    )],
-                    ret_type: Type::Plain(PlainType {
-                        name: "i32".to_owned(),
-                    }),
-                    block: Block {
-                        statements: vec![],
-                        expr: None,
-                    },
-                };
+                    ),
+                    (
+                        "my2",
+                        Type::Plain(PlainType {
+                            name: "MyStruct".to_owned(),
+                        }),
+                    ),
+                ],
+                ret_type: Type::Int32,
+                block: Block {
+                    statements: vec![],
+                    expr: None,
+                },
+            };
 
-                assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct) -> i32 {}"}
-
-                let declare = FunctionDeclare {
-                    ident: "main",
-                    parameters: vec![
-                        (
-                            "my",
-                            Type::Plain(PlainType {
-                                name: "MyStruct".to_owned(),
-                            }),
-                        ),
-                        (
-                            "my2",
-                            Type::Plain(PlainType {
-                                name: "MyStruct".to_owned(),
-                            }),
-                        ),
-                    ],
-                    ret_type: Type::Plain(PlainType {
-                        name: "i32".to_owned(),
-                    }),
-                    block: Block {
-                        statements: vec![],
-                        expr: None,
-                    },
-                };
-
-                assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct) -> i32 {}"}
-            }
+            assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct) -> i32 {}"}
         }
 
         #[test]

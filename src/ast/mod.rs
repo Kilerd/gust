@@ -10,8 +10,19 @@ pub enum Item<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Statement {
     LetStatement(LetStatement),
+    Assignment(Assignment),
     Expr(Expression),
 }
+
+
+
+#[derive(Debug, PartialEq)]
+pub struct Assignment {
+    pub identifier: String,
+    pub value: Expression,
+}
+
+
 
 
 /// ```gust
