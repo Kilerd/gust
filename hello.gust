@@ -1,0 +1,5 @@
+use fmt;
+
+fn main() {
+    fmt.Println("hello world");
+}

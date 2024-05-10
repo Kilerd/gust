@@ -1,29 +1,16 @@
 <div align="center">
     <h1>gust</h1>
-    <p>rust like version of go</p>
-    <img alt="GitHub Workflow Status (with branch)" src="https://img.shields.io/github/actions/workflow/status/kilerd/gust/ci-for-main.yaml?branch=main">
-    <a href="https://crates.io/crates/gust"><img alt="Crates.io" src="https://img.shields.io/crates/v/gust"></a>
-    <a href="https://codecov.io/gh/kilerd/gust" >
-    <img src="https://codecov.io/gh/kilerd/gust/branch/main/graph/badge.svg"/>
-    </a>
-    <a href="https://crates.io/crates/gust">
-    <img alt="Crates.io (recent)" src="https://img.shields.io/crates/dr/gust"></a>
-    <a href="https://docs.rs/gust"><img alt="docs.rs" src="https://img.shields.io/docsrs/gust"></a>
-    <img alt="Crates.io" src="https://img.shields.io/crates/l/gust">
+    <p>go yes, but gust is better</p>
 </div>
 
-## Features
- - todo
- - todo
-
-## Installation
-```sh
-$ cargo add gust
-```
 
 ## Example
-```rust
-// todo
+```gust
+use fmt;
+
+fn main() {
+    fmt.Println("hello world");
+}
 ```
 
 ## Contributing

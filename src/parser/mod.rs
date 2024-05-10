@@ -1,16 +1,20 @@
-use nom::{InputTakeAtPosition, IResult, Parser};
+use log::error;
 use nom::branch::alt;
 use nom::bytes::complete::{escaped, tag};
-use nom::character::complete::{alpha1, alphanumeric1, char, digit1, line_ending, one_of, space0};
+use nom::character::complete::{
+    alpha1, alphanumeric1, char, digit1, line_ending, one_of, space0, space1,
+};
 use nom::combinator::{cut, map, opt, recognize};
 use nom::error::context;
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
+use nom::{IResult, InputTakeAtPosition, Parser};
 use nom_locate::LocatedSpan;
+use std::borrow::Cow;
 
 use crate::ast::{
-    Assignment, Block, Expression, FunctionDeclare, Import, Item, LetStatement, PlainType,
-    Statement, Type,
+    Assignment, Block, Expression, FunctionDeclare, GustFile, Import, Item, LetStatement,
+    PlainType, Statement, Type,
 };
 use crate::parser::helpers::{
     leading_space_0, surrounding_space_0, surrounding_space_1, tailing_separator_list_0,
@@ -20,20 +24,26 @@ use crate::parser::helpers::{
 pub type Span<'a> = LocatedSpan<&'a str>;
 
 mod helpers;
-//
-// pub fn parse_file(input: &str) -> IResult<&str, GustFile> {
-//     // let result = many0(
-//     //     alt((
-//     //         parse_statement,
-//     //         parse_import
-//     //         ))
-//     // )(input)?;
-//     todo!()
-// }
-//
+
+pub fn parse_file(input: Span) -> Result<GustFile, ()> {
+    let result = parse_items(input);
+    match result {
+        Ok((res, stats)) => {
+            let file = GustFile { items: stats };
+            Ok(file)
+        }
+        Err(e) => {
+            error!("parse error: {}", e);
+            Err(())
+        }
+    }
+}
 
 pub fn parse_items(input: Span) -> IResult<Span, Vec<Item>> {
-    many0(terminated(parse_item, many0(alt((space0, line_ending)))))(input)
+    many0(terminated(
+        parse_item,
+        opt(many0(alt((space1, line_ending)))),
+    ))(input)
 }
 
 pub fn parse_item(input: Span) -> IResult<Span, Item> {
@@ -44,20 +54,26 @@ pub fn parse_item(input: Span) -> IResult<Span, Item> {
 }
 
 pub fn parse_function_declare(input: Span) -> IResult<Span, FunctionDeclare> {
-    let (r, (_, ident, _, parameters, _, _, ret_type, block)) = tuple((
+    let (r, (_, ident, _, parameters, _, ret_type, block)) = tuple((
         tailing_space_1(tag("fn")),
         tailing_space_0(parse_type_identifier),
         tailing_space_0(tag("(")),
         tailing_space_0(parse_function_parameters),
         tailing_space_0(tag(")")),
-        tailing_space_0(tag("->")),
-        tailing_space_0(parse_type),
-        tailing_space_0(parse_block),
+        opt(preceded(
+            surrounding_space_0(tag("->")),
+            surrounding_space_0(parse_type),
+        )),
+        surrounding_space_0(parse_block),
     ))(input)?;
+    let parameters = parameters
+        .into_iter()
+        .map(|it| (it.0.to_string(), it.1))
+        .collect();
     let declare = FunctionDeclare {
-        ident: ident.fragment(),
+        ident: ident.fragment().to_string(),
         parameters,
-        ret_type,
+        ret_type: ret_type.unwrap_or_else(|| Type::Unit),
         block,
     };
     Ok((r, declare))
@@ -170,7 +186,6 @@ pub fn parse_atom(input: Span) -> IResult<Span, Expression> {
     ))(input)
 }
 
-
 /// STRING
 ///
 /// todo: unicode support
@@ -179,13 +194,12 @@ pub fn parse_string(input: Span) -> IResult<Span, Expression> {
         "string",
         preceded(char('\"'), cut(terminated(parse_string_inner, char('\"')))),
     )
-        .parse(input)?;
+    .parse(input)?;
     let expr = Expression::String(s.fragment().to_string());
     Ok((res, expr))
-
 }
 fn parse_string_inner(input: Span) -> IResult<Span, Span> {
-    escaped(alphanumeric1, '\\', one_of("\"n\\"))(input)
+    escaped(alt((alphanumeric1, space1)), '\\', one_of("\"n\\"))(input)
 }
 
 /// BOOL = true | false
@@ -211,11 +225,8 @@ pub fn parse_identifier(input: Span) -> IResult<Span, Span> {
 
 /// FUNCTION_PARAMETER = IDENTIFIER ~ ":" ~ TYPE
 pub fn parse_function_parameter(input: Span) -> IResult<Span, (&str, Type)> {
-    let (i, (ident, _, ty)) = tuple((
-        parse_identifier,
-        leading_space_0(tailing_space_0(tag(":"))),
-        parse_type,
-    ))(input)?;
+    let (i, (ident, _, ty)) =
+        tuple((parse_identifier, surrounding_space_0(tag(":")), parse_type))(input)?;
     Ok((i, (ident.fragment(), ty)))
 }
 
@@ -341,10 +352,10 @@ pub fn parse_field_access(s: Span) -> IResult<Span, Expression> {
 
 pub fn parse_block(input: Span) -> IResult<Span, Block> {
     let (r, (_, statements, expr, _)) = tuple((
-        tailing_space_0(tag("{")),
+        surrounding_space_0(tag("{")),
         many0(parse_statement),
         opt(parse_expression),
-        tailing_space_0(tag("}")),
+        surrounding_space_0(tag("}")),
     ))(input)?;
 
     let block = Block { statements, expr };
@@ -353,6 +364,7 @@ pub fn parse_block(input: Span) -> IResult<Span, Block> {
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Cow;
     use std::error::Error;
 
     macro_rules! easy_parse {
@@ -612,13 +624,14 @@ mod test {
     }
 
     mod function_declare {
-        use crate::ast::{Block, FunctionDeclare, PlainType, Type};
+        use crate::ast::{Block, Expression, FunctionDeclare, PlainType, Statement, Type};
         use crate::parser::parse_function_declare;
+        use indoc::indoc;
 
         #[test]
         fn should_parse_empty_function_with_i32_return_type() {
             let declare = FunctionDeclare {
-                ident: "main",
+                ident: "main".to_string(),
                 parameters: vec![],
                 ret_type: Type::Int32,
                 block: Block {
@@ -633,9 +646,9 @@ mod test {
         #[test]
         fn should_parse_empty_function_with_params_and_return_type() {
             let declare = FunctionDeclare {
-                ident: "main",
+                ident: "main".to_string(),
                 parameters: vec![(
-                    "my",
+                    "my".to_string(),
                     Type::Plain(PlainType {
                         name: "MyStruct".to_owned(),
                     }),
@@ -650,16 +663,16 @@ mod test {
             assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct) -> i32 {}"}
 
             let declare = FunctionDeclare {
-                ident: "main",
+                ident: "main".to_string(),
                 parameters: vec![
                     (
-                        "my",
+                        "my".to_string(),
                         Type::Plain(PlainType {
                             name: "MyStruct".to_owned(),
                         }),
                     ),
                     (
-                        "my2",
+                        "my2".to_string(),
                         Type::Plain(PlainType {
                             name: "MyStruct".to_owned(),
                         }),
@@ -678,16 +691,16 @@ mod test {
         #[test]
         fn should_parse_with_trailing_comma() {
             let declare = FunctionDeclare {
-                ident: "main",
+                ident: "main".to_string(),
                 parameters: vec![
                     (
-                        "my",
+                        "my".to_string(),
                         Type::Plain(PlainType {
                             name: "MyStruct".to_owned(),
                         }),
                     ),
                     (
-                        "my2",
+                        "my2".to_string(),
                         Type::Plain(PlainType {
                             name: "MyStruct".to_owned(),
                         }),
@@ -701,6 +714,47 @@ mod test {
             };
 
             assert_parse! {declare, parse_function_declare,"fn main(my: MyStruct, my2:MyStruct,) -> i32 {}"}
+        }
+        #[test]
+        fn function_declare_without_return_type() {
+            let declare = FunctionDeclare {
+                ident: "main".to_string(),
+                parameters: vec![],
+                ret_type: Type::Unit,
+                block: Block {
+                    statements: vec![],
+                    expr: None,
+                },
+            };
+
+            assert_parse! {declare, parse_function_declare,"fn main() {}"}
+        }
+
+        #[test]
+        fn multiline() {
+            let declare = FunctionDeclare {
+                ident: "main".to_string(),
+                parameters: vec![],
+                ret_type: Type::Unit,
+                block: Block {
+                    statements: vec![Statement::Expr(Expression::FunctionCall(
+                        Box::new(Expression::FieldAccess(
+                            Box::new(Expression::Identifier("fmt".to_string())),
+                            Box::new(Expression::Identifier("printLn".to_string())),
+                        )),
+                        vec![Box::new(Expression::String("hello world".to_string()))],
+                    ))],
+                    expr: None,
+                },
+            };
+
+            assert_parse! {declare, parse_function_declare,
+                indoc! {r#"
+                    fn main() {
+                        fmt.printLn("hello world");
+                    }
+                "#}
+            }
         }
     }
 
@@ -846,10 +900,15 @@ mod test {
             #[test]
             fn alphanumeric() {
                 let expr = Expression::String("123".to_string());
-                assert_parse!{ expr, parse_expression, r#""123""#}
+                assert_parse! { expr, parse_expression, r#""123""#}
 
                 let expr = Expression::String("a123".to_string());
-                assert_parse!{ expr, parse_expression, r#""a123""#}
+                assert_parse! { expr, parse_expression, r#""a123""#}
+            }
+            #[test]
+            fn with_space() {
+                let expr = Expression::String("hello world".to_string());
+                assert_parse! { expr, parse_expression, r#""hello world""#}
             }
         }
     }

@@ -1,10 +1,12 @@
-pub struct GustFile<'a> {
-    statements: Vec<Item<'a>>,
+#[derive(Debug)]
+pub struct GustFile {
+    pub items: Vec<Item>,
 }
 
-pub enum Item<'a> {
+#[derive(Debug)]
+pub enum Item {
     Import(Import),
-    FunctionDeclare(FunctionDeclare<'a>),
+    FunctionDeclare(FunctionDeclare),
 }
 
 #[derive(Debug, PartialEq)]
@@ -14,16 +16,11 @@ pub enum Statement {
     Expr(Expression),
 }
 
-
-
 #[derive(Debug, PartialEq)]
 pub struct Assignment {
     pub identifier: String,
     pub value: Expression,
 }
-
-
-
 
 /// ```gust
 /// let a = 1;
@@ -38,9 +35,8 @@ pub struct LetStatement {
     pub ttype: Option<Type>,
 
     /// value can be initialised later.
-    pub value: Option<Expression>
+    pub value: Option<Expression>,
 }
-
 
 /// ```gust
 /// use fmt;
@@ -53,7 +49,7 @@ pub struct Import {
     pub items: Vec<String>,
 }
 
-pub type Parameter<'a> = (&'a str, Type);
+pub type Parameter = (String, Type);
 
 /// ```gust
 /// pub fn main() {
@@ -61,9 +57,9 @@ pub type Parameter<'a> = (&'a str, Type);
 /// }
 /// ```
 #[derive(Debug, PartialEq)]
-pub struct FunctionDeclare<'a> {
-    pub ident: &'a str,
-    pub parameters: Vec<Parameter<'a>>,
+pub struct FunctionDeclare {
+    pub ident: String,
+    pub parameters: Vec<Parameter>,
     pub ret_type: Type,
     pub block: Block,
 }
@@ -102,7 +98,6 @@ pub enum Expression {
     },
     FunctionCall(Box<Expression>, Vec<Box<Expression>>),
     Group(Box<Expression>),
-    Negative(Box<i32>),
 }
 
 #[derive(Debug, PartialEq)]
