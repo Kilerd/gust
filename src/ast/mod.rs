@@ -64,6 +64,8 @@ pub struct FunctionDeclare {
     pub block: Block,
 }
 
+
+#[warn(dead_code)]
 #[derive(Debug, PartialOrd, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum Opcode {
     Add,

@@ -1,10 +1,9 @@
+use itertools::Itertools;
+
 use crate::ast::{
     Assignment, Block, Expression, FunctionDeclare, GustFile, Import, Item, LetStatement,
     Statement, Type,
 };
-use itertools::Itertools;
-use std::fmt::format;
-use std::io::Bytes;
 
 pub trait Transform {
     fn to_go(&self) -> String;

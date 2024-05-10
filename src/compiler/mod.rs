@@ -1,7 +1,6 @@
 use crate::ast::GustFile;
 use crate::compiler::transform::Transform;
 use log::info;
-use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

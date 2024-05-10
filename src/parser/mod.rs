@@ -2,15 +2,14 @@ use log::error;
 use nom::branch::alt;
 use nom::bytes::complete::{escaped, tag};
 use nom::character::complete::{
-    alpha1, alphanumeric1, char, digit1, line_ending, one_of, space0, space1,
+    alpha1, alphanumeric1, char, digit1, line_ending, one_of, space1,
 };
 use nom::combinator::{cut, map, opt, recognize};
 use nom::error::context;
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{delimited, preceded, terminated, tuple};
-use nom::{IResult, InputTakeAtPosition, Parser};
+use nom::{IResult, Parser};
 use nom_locate::LocatedSpan;
-use std::borrow::Cow;
 
 use crate::ast::{
     Assignment, Block, Expression, FunctionDeclare, GustFile, Import, Item, LetStatement,
@@ -23,12 +22,12 @@ use crate::parser::helpers::{
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
-mod helpers;
+pub mod helpers;
 
 pub fn parse_file(input: Span) -> Result<GustFile, ()> {
     let result = parse_items(input);
     match result {
-        Ok((res, stats)) => {
+        Ok((_, stats)) => {
             let file = GustFile { items: stats };
             Ok(file)
         }

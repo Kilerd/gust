@@ -1,12 +1,10 @@
 use crate::compiler::Compiler;
-use crate::parser::Span;
 use anyhow::Result as AnyResult;
 use log::error;
-use std::env::{args, args_os};
 use std::path::PathBuf;
 
 mod ast;
-mod parser;
+pub mod parser;
 
 mod compiler;
 
